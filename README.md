@@ -1,5 +1,4 @@
 
-```
 # LitAgent
 
 LitAgent is a research paper search, reading, and comparison agent built with LangGraph.
@@ -94,7 +93,6 @@ LitAgent can:
 
 ## Project Structure
 
-```
 LitAgent/
 ©À©¤©¤ api/
 ©¦   ©¸©¤©¤ main.py
@@ -125,7 +123,6 @@ LitAgent/
 ©À©¤©¤ pyproject.toml
 ©À©¤©¤ .gitignore
 ©¸©¤©¤ README.md
-```
 
 ## Quick Start
 
