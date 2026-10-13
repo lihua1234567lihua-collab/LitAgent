@@ -5,14 +5,11 @@ import re
 import sqlite3
 
 from dotenv import load_dotenv
-
 from langgraph.graph import StateGraph, START, END
 from langgraph.graph.message import add_messages
 from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.types import interrupt
-
 from langchain_core.messages import AnyMessage, AIMessage
-
 from agent.router import create_router
 from agent.paper_search_pipeline import search_papers_with_agent
 
@@ -21,6 +18,11 @@ from rag.query_rewriter import rewrite_query
 import json
 from tools.paper_search import search_papers
 from tools.paper_reader import read_paper
+from tools.paper_pdf import download_pdf
+from services.fulltext_resolver import (
+    abstract_is_sufficient,
+    resolve_paper_content,
+)
 # ============================================================
 # 1. State
 # ============================================================
@@ -69,6 +71,17 @@ class ResearchState(TypedDict):
     # Human-in-the-loop
     # -------------------------
     approved: NotRequired[bool]
+
+    # -------------------------
+    # waiting for full-text
+    # -------------------------
+    pending_fulltext: NotRequired[list[dict]]
+
+    
+    # -------------------------
+    # Reading_Status
+    # -------------------------
+    paper_read_status: NotRequired[str]
 
     # ========================================================
     # Planner
@@ -210,9 +223,48 @@ def build_research_graph(model):
         paper_contents = []
 
         for paper in selected_papers:
-            result = read_paper(paper)
-            paper_contents.append(result)
+            paper_data = read_paper(paper)
 
+            resolved = resolve_paper_content(
+                paper=paper_data,
+                task=step,
+                model=model,
+            )
+
+            print("\n===== Paper Content Resolve =====")
+            print("title:", paper_data.get("title"))
+            print("status:", resolved.get("status"))
+            print("content_type:", resolved.get("content_type"))
+
+            paper_contents.append(resolved)
+        need_fulltext_papers = [
+        item
+        for item in paper_contents
+        if item.get("status") == "need_fulltext"
+    ]
+
+        if need_fulltext_papers:
+            print("\n===== Need Fulltext =====")
+
+            missing_papers = []
+
+            for item in need_fulltext_papers:
+                paper = item.get("paper", {})
+
+                missing_papers.append({
+                    "title": paper.get("title"),
+                    "doi": paper.get("doi"),
+                    "openalex_id": paper.get("openalex_id"),
+                })
+
+                print("需要全文:", paper.get("title"))
+
+            interrupt({
+                "type": "fulltext_required",
+                "message": "当前步骤需要论文全文，自动获取流程尚未完成。",
+                "papers": missing_papers,
+                "step": step,
+            })
         prompt = f"""
     当前任务步骤：
 
