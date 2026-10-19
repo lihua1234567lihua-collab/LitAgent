@@ -1,10 +1,14 @@
-from langchain_openai import ChatOpenAI
-from langchain_core.messages import HumanMessage
-from langgraph.types import Command
-from dotenv import load_dotenv
-from agent.graph import build_research_graph
-import uuid
+import asyncio
 import os
+import sys
+import uuid
+
+import aiosqlite
+from dotenv import load_dotenv
+from langchain_openai import ChatOpenAI
+from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
+
+from agent.graph import build_research_graph
 
 
 # =========================
@@ -29,14 +33,9 @@ model = ChatOpenAI(
     reasoning_effort="none",
 )
 
-
 # =========================
-# 3. 构建 LangGraph
+# 4. thread_id
 # =========================
-
-graph = build_research_graph(
-    model
-)
 
 def get_thread_id(existing_thread_id=None):
     if existing_thread_id:
@@ -44,33 +43,70 @@ def get_thread_id(existing_thread_id=None):
 
     return str(uuid.uuid4())
 
-thread_id = get_thread_id()
 
-config = {
-    "configurable": {
-        "thread_id": thread_id
-    }
-}
-print("当前thread_id",thread_id)
-initial_state = {
-    "user_query": "帮我找3篇 LiDAR tree crown segmentation 的论文，并比较它们的方法、数据集和优缺点",
-    "trace": [],
-    "messages": [],
-}
+# =========================
+# 5. 异步主函数
+# =========================
 
-result = graph.invoke(
-    initial_state,
-    config=config,
-)
+async def main():
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
-print("===== Final State =====")
-print(result)
+    # =========================
+    # 3. 构建 LangGraph
+    # =========================
 
-print("\n===== Plan =====")
-print(result.get("plan"))
+    connection = await aiosqlite.connect("data/checkpoints.sqlite")
+    try:
+        checkpointer = AsyncSqliteSaver(connection)
+        graph = build_research_graph(model, checkpointer=checkpointer)
 
-print("\n===== Current Step =====")
-print(result.get("current_step"))
+        thread_id = get_thread_id()
 
-print("\n===== Trace =====")
-print(result.get("trace"))
+        config = {
+            "configurable": {
+                "thread_id": thread_id
+            }
+        }
+
+        print("当前 thread_id:", thread_id)
+
+        initial_state = {
+            "user_query": (
+                "告诉我雷达传感器的机制"
+            ),
+            "trace": [],
+            "messages": [],
+            "step_results": [],
+        }
+
+        result = await graph.ainvoke(
+            initial_state,
+            config=config,
+        )
+
+        print("\n===== Final State =====")
+        print(result)
+
+        print("\n===== Plan =====")
+        print(result.get("plan"))
+
+        print("\n===== Current Step =====")
+        print(result.get("current_step"))
+
+        print("\n===== Step Results =====")
+        print(result.get("step_results"))
+
+        print("\n===== Step Action =====")
+        print(result.get("step_action"))
+
+    finally:
+        await connection.close()
+
+
+# =========================
+# 6. 程序入口
+# =========================
+
+if __name__ == "__main__":
+    asyncio.run(main())

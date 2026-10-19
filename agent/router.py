@@ -9,6 +9,7 @@ class RouteDecision(BaseModel):
 
 
 def create_router(model):
+    #明确的路由描述和使用场景
     prompt = ChatPromptTemplate.from_messages([
     (
         "system",
@@ -17,7 +18,7 @@ def create_router(model):
 
         你只能选择以下个路由之一：
 
-        1. direct_answer
+        1. direct_answer 
         用户询问普通知识、概念解释，不需要查询论文。
 
         2. local_rag
@@ -39,4 +40,4 @@ def create_router(model):
     ),
     ("human", "{question}")])
 
-    return prompt | model.with_structured_output(RouteDecision,method="function_calling")
+    return prompt | model.with_structured_output(RouteDecision,method="function_calling")##llm返回结构化的route类型
