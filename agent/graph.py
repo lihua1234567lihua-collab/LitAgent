@@ -2,7 +2,7 @@
 
 This module deliberately contains workflow state, node boundaries, routing, and
 checkpoint wiring only. Network calls, paper reading, full-text resolution, and
-RAG remain implemented by the existing tools, services, and rag packages.
+RAG remain implemented by the existing tools, services, and rag packages.工作流编排，定义节点，连接节点，管理执行顺序和状态流转
 """
 
 import json
@@ -10,28 +10,37 @@ import logging
 import operator
 import re
 from typing import Annotated, Any, Callable, NotRequired, TypedDict
-
 from langchain_core.messages import AIMessage, AnyMessage
 from langchain_core.runnables import RunnableConfig
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.message import add_messages
 from langgraph.types import interrupt
-
+from services.topic_service import resolve_topic_from_query
+from services.library_rag_service import (
+    answer_topic_question,
+    answer_user_library_question,
+    answer_uploaded_paper_question,
+)
 from agent.router import create_router
 from rag.pipeline import answer_with_rag
 from rag.query_rewriter import rewrite_query
 from services.code_reproduce_service import run_code_reproduce
-from services.fulltext_resolver import resolve_paper_content
-from services.step_validator import (
+from services.local_pdf_resolver import resolve_paper_content
+from agent.step_validator import (
     validate_code_reproduce,
     validate_paper_read,
     validate_paper_search,
     validate_reasoning,
 )
 from services.paper_read_service import prepare_paper_read
-from tools.paper_reader import read_paper
+from tools.paper_metadata import fetch_paper_metadata
 from tools.paper_search import search_papers
-from services.search_query_service import build_search_query
+from services.paper_search_request_service import build_search_request
+from agent.context_manager import (
+    get_router_history,
+    get_recent_messages,
+)
+
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +61,9 @@ class ResearchState(TypedDict):
     """Small, explicit state shared by every workflow node."""
 
     user_query: str
+    user_id:NotRequired[int]
+    topic_id: NotRequired[int]
+    latest_uploaded_paper_id: NotRequired[int | None]
     route: NotRequired[str]
     search_query: NotRequired[str]
     search_results: NotRequired[list[dict[str, Any]]]
@@ -70,10 +82,11 @@ class ResearchState(TypedDict):
     step_validation:NotRequired[dict[str,Any]] ##预留validator结果
     step_results: Annotated[list[str], operator.add]
     answer: NotRequired[str]
-    messages: Annotated[list[AnyMessage], add_messages]
+    messages: Annotated[list[AnyMessage], add_messages]##当前thread的对话历史。add_messages持续累积
     trace: Annotated[list[str], operator.add]
     approved: NotRequired[bool]
     pending_fulltext: NotRequired[list[dict[str, Any]]]
+    paper_scope: NotRequired[str]
 
 
 def _response_text(response: Any) -> str:
@@ -151,12 +164,18 @@ def create_node_handlers(model: Any) -> dict[str, Callable[..., dict[str, Any]]]
     router = create_router(model)
 
     def router_node(state: ResearchState) -> dict[str, Any]:
-        decision = router.invoke({"question": state["user_query"]})
+        history = get_router_history(state, limit=4)
+
+        decision = router.invoke({
+            "question": state["user_query"],
+            "history": history,
+        })
+
         route = decision.route
         if route not in ROUTES:
             raise ValueError(f"Router returned unsupported route: {route!r}")
         logger.info("[Router] route=%s", route)
-        return {"route": route, "trace": ["router"]}
+        return {"route": route, "paper_scope": decision.paper_scope, "trace": ["router"]}
 
     def planner_node(state: ResearchState) -> dict[str, Any]:
         prompt = f"""
@@ -171,7 +190,7 @@ def create_node_handlers(model: Any) -> dict[str, Callable[..., dict[str, Any]]]
                 User request:
                 {state["user_query"]}
                 """
-        
+
         plan = _parse_plan_response(
             _response_text(model.invoke(prompt)),
             state["user_query"],
@@ -181,7 +200,7 @@ def create_node_handlers(model: Any) -> dict[str, Callable[..., dict[str, Any]]]
             "current_step": 0,
             "trace": ["planner"],
         }
-    
+
     def validator_node(state: ResearchState) -> dict[str, Any]:
         _, step = _current_step(state)
         output = state.get("step_output", {})
@@ -243,7 +262,9 @@ def create_node_handlers(model: Any) -> dict[str, Callable[..., dict[str, Any]]]
         return {"step_action": action, "trace": ["executor"]}
 
     def direct_answer_node(state: ResearchState) -> dict[str, Any]:
-        answer = _response_text(model.invoke(state["user_query"]))
+        context = get_recent_messages(state, limit=6)
+        model_input = context if context else state["user_query"]
+        answer = _response_text(model.invoke(model_input))
         return {
             "answer": answer,
             "messages": [AIMessage(content=answer)],
@@ -254,48 +275,112 @@ def create_node_handlers(model: Any) -> dict[str, Callable[..., dict[str, Any]]]
         query = rewrite_query(model, state["user_query"])
         return {"search_query": query, "trace": ["rewrite_query"]}
 
-    def rag_node(state: ResearchState) -> dict[str, Any]:
+    async def rag_node(state: ResearchState) -> dict[str, Any]:
         is_planner_step = bool(state.get("plan"))
+
         query = (
             state["plan"][state.get("current_step", 0)]
             if is_planner_step
             else state["user_query"]
         )
+
+        user_id = state.get("user_id")
         search_query = state.get("search_query")
-        if is_planner_step or not search_query:
-            search_query = rewrite_query(model, query)
-        answer = answer_with_rag(
-            user_query=query,
-            model=model,
-            search_query=search_query,
-            debug=False,
-        )
+
+        if user_id is not None:
+
+            paper_scope = state.get("paper_scope", "none")
+            paper_id = state.get("latest_uploaded_paper_id")
+
+            if paper_scope == "current_paper":
+                # 用户正在询问当前论文
+                if paper_id is None:
+                    answer = "当前会话没有关联的论文，请先上传 PDF。"
+                else:
+                    answer = await answer_uploaded_paper_question(
+                        user_id=user_id,
+                        paper_id=paper_id,
+                        user_query=query,
+                        model=model,
+                    )
+
+            elif paper_scope == "topic":
+                # 用户询问某个 Topic 下的论文
+                topic_id = await resolve_topic_from_query(
+                    user_id=user_id,
+                    user_query=state["user_query"],
+                )
+
+                if topic_id is None:
+                    answer = "无法确定你要查询的 Topic，请提供具体的 Topic 名称。"
+                else:
+                    answer = await answer_topic_question(
+                        topic_id=topic_id,
+                        user_query=query,
+                        model=model,
+                    )
+
+            else:
+                # 用户论文库范围，或未明确指定范围
+                answer = await answer_user_library_question(
+                    user_id=user_id,
+                    user_query=query,
+                    model=model,
+                )
+
         if not is_planner_step:
             return {
                 "answer": answer,
                 "messages": [AIMessage(content=answer)],
                 "trace": ["rag"],
             }
+
         update = _step_update(state, answer, "rag")
-        update["search_query"] = search_query
+        if search_query is not None:
+            update["search_query"] = search_query
         return update
 
     def paper_search_node(state: ResearchState) -> dict[str, Any]:
         results = list(state.get("search_results") or [])
-        query=state.get("search_query")
-   
+        query = state.get("search_query")
+
         if not results:
-            if not query:
-                query=build_search_query(model, state["user_query"])
-            print("关键词"+query)
-            results = _normalize_papers(
-                search_papers.invoke({"query": query, "top_k": 5})
+            # 解析用户的论文检索条件
+            request = build_search_request(
+                model,
+                state["user_query"],
             )
+
+            query = request.query
+
+            logger.info(
+                "[PaperSearch] query=%s top_k=%s years=%s-%s",
+                request.query,
+                request.top_k,
+                request.start_year,
+                request.end_year,
+            )
+
+            # 调用 OpenAlex
+            results = _normalize_papers(
+                search_papers.invoke(request.model_dump())
+            )
+
+
+        # 新增：验证论文搜索结果
+        validation = validate_paper_search(
+            step_goal=state["user_query"],
+            search_results=results,
+        )
+
+        logger.info("[PaperSearch Validator] %s", validation)
+        print("[PaperSearch Validator]", validation, flush=True)
 
         selected = list(state.get("selected_papers") or results[:3])
         update: dict[str, Any] = {
             "search_results": results,
             "selected_papers": selected,
+            "search_query": query,
         }
 
 
@@ -342,32 +427,33 @@ def create_node_handlers(model: Any) -> dict[str, Callable[..., dict[str, Any]]]
             model=model,
             state=state,
             config=config,
-            paper_reader=read_paper,
+            paper_reader=fetch_paper_metadata,
             resolver=resolve_paper_content,
         )
         if result["missing"]:
-            logger.warning("[HITL] fulltext required: %s", len(result["missing"]))
-            interrupt({
-                "type": "fulltext_required",
-                "message": "Provide the missing PDFs at the target paths and resume the thread.",
-                "papers": result["missing"],
-                "step": step,
-            })
+            logger.warning(
+                "[PaperRead] fulltext unavailable: %s",
+                len(result["missing"]),
+            )
+
             return {
+                # 关键：先把 mcp_attempts 保存进 State
+                "paper_contents": result["paper_contents"],
+                "paper_analyses": result["paper_analyses"],
                 "pending_fulltext": result["missing"],
-                "step_results": ["Waiting for user-provided full text; no executor retry was scheduled."],
-                "trace": ["paper_read_waiting"],
+                "trace": ["paper_read_missing"],
             }
+
         return {
-            "paper_contents": result["paper_contents"],
-            "paper_analyses": result["paper_analyses"],
-            "pending_fulltext": [],
-            "step_output": {
-                "action": "paper_read",
-                "summary": result["summary"],
-            },
-            "trace": ["paper_read"],
-        }
+        "paper_contents": result["paper_contents"],
+        "paper_analyses": result["paper_analyses"],
+        "pending_fulltext": [],
+        "step_output": {
+            "action": "paper_read",
+            "summary": result["summary"],
+        },
+        "trace": ["paper_read"],
+    }
 
     async def code_reproduce_node(state: ResearchState) -> dict[str, Any]:
         _, step = _current_step(state)
@@ -407,6 +493,20 @@ Evidence:
             },
             "trace": ["reasoning"],
         }
+
+    def paper_read_wait_node(state: ResearchState) -> dict[str, Any]:
+        _, step = _current_step(state)
+
+        interrupt({
+            "type": "fulltext_required",
+            "message": "暂时无法自动获取论文全文，请上传 PDF 后继续。",
+            "papers": state.get("pending_fulltext", []),
+            "step": step,
+        })
+
+        return {
+            "trace": ["paper_read_resumed"],
+    }
 
     def final_answer_node(state: ResearchState) -> dict[str, Any]:
         prompt = f"""
@@ -460,6 +560,7 @@ Cached paper analyses:
         "approval": approval_node,
         "cancel": cancel_node,
         "validator": validator_node,
+        "paper_read_wait": paper_read_wait_node,
     }
 
 
@@ -573,13 +674,15 @@ def build_research_graph(model: Any, checkpointer=None):
         },
     )
     builder.add_conditional_edges(
-        "paper_read",
-        paper_read_route,
-        {
-            "wait": END,
-            "validate": "validator",
-        },
-    )
+    "paper_read",
+    paper_read_route,
+    {
+        "retry": "paper_read",
+        "wait": "paper_read_wait",
+        "validate": "validator",
+    },
+)
+    builder.add_edge("paper_read_wait", "paper_read")
     builder.add_edge("code_reproduce", "validator")
     builder.add_edge("reasoning", "validator")
     builder.add_edge("final_answer", END)

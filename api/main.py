@@ -6,15 +6,16 @@ import json
 import aiosqlite
 import httpx
 from dotenv import load_dotenv
-from fastapi import FastAPI
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from pydantic import BaseModel
 from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from langgraph.types import Command
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from agent.graph import build_research_graph
-
-
+from langchain_core.messages import HumanMessage
+from langgraph.types import Command, Overwrite
+from services.pdf_import_service import import_pdf
 # =========================
 # 1. 环境变量
 # =========================
@@ -42,7 +43,6 @@ model = ChatOpenAI(
 
 graph = None
 
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global graph
@@ -57,7 +57,6 @@ async def lifespan(app: FastAPI):
     finally:
         graph = None
         await connection.close()
-
 
 async def get_graph():
     """Build the async-checkpointed graph once for the FastAPI process."""
@@ -85,8 +84,74 @@ class ChatRequest(BaseModel):
     message: str
     thread_id: str | None = None
     resume: bool | None = None
+    latest_uploaded_paper_id: int | None = None
+    user_id:int
 
+UPLOAD_DIR = Path(__file__).resolve().parent.parent / "data" / "papers"
 
+@app.post("/papers/upload")
+async def upload_paper(
+    file: UploadFile = File(...),
+    topic_id: int = Form(...),
+    title: str = Form(...),
+    doi: str = Form(...)
+):
+    if not file.filename or not file.filename.lower().endswith(".pdf"):
+        raise HTTPException(status_code=400, detail="只支持 PDF 文件")
+
+    UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+
+    # 使用 UUID 命名，避免文件名冲突
+    pdf_path = UPLOAD_DIR / f"{uuid.uuid4().hex}.pdf"
+
+    size = 0
+
+    try:
+        with pdf_path.open("wb") as f:
+            while chunk := await file.read(1024 * 1024):
+                size += len(chunk)
+
+                if size > 20 * 1024 * 1024:
+                    raise HTTPException(
+                        status_code=413,
+                        detail="PDF 文件不能超过 20MB"
+                    )
+
+                if size == len(chunk) and not chunk.startswith(b"%PDF-"):
+                    raise HTTPException(
+                        status_code=400,
+                        detail="文件不是有效的 PDF 格式"
+                    )
+
+                f.write(chunk)
+
+    except Exception:
+        pdf_path.unlink(missing_ok=True)
+        raise
+
+    finally:
+        await file.close()
+
+    # PDF 已保存，开始解析和收藏
+    try:
+        result = await import_pdf(
+            pdf_path=pdf_path,
+            topic_id=topic_id,
+            doi=doi,
+            title=title,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail=str(exc)
+        ) from exc
+
+    return {
+        "status": "collected",
+        "filename": file.filename,
+        "pdf_path": str(pdf_path),
+        **result
+    }
 # =========================
 # 5. Chat Gateway
 # =========================
@@ -109,10 +174,30 @@ async def chat(request: ChatRequest):
         if request.resume is not None
         else {
             "user_query": request.message,
+            "user_id":request.user_id,
+            "latest_uploaded_paper_id": request.latest_uploaded_paper_id,
+            "messages": [HumanMessage(content=request.message)],
+
+            # 新任务：重置 Task State
+            "route": None,
+            "search_query": None,
+            "search_results": [],
+            "selected_papers": [],
+            "paper_contents": Overwrite({}),
+            "paper_analyses": Overwrite({}),
+            "plan": [],
+            "retry_count": 0,
+            "current_step": 0,
+            "step_action": None,
+            "step_output": None,
+            "step_validation": None,
+            "step_results": Overwrite([]),
+            "answer": None,
+            "pending_fulltext": [],
+
             "trace": [],
-            "messages": [],
         }
-    )
+)
 
     active_graph = await get_graph()
     try:
@@ -120,6 +205,19 @@ async def chat(request: ChatRequest):
             graph_input,
             config=config,
         )
+        print("\n===== TASK STATE CHECK =====")
+        print("route:", result.get("route"))
+        print("plan:", result.get("plan"))
+        print("current_step:", result.get("current_step"))
+        print("search_results:", result.get("search_results"))
+        print("step_results:", result.get("step_results"))
+        print("paper_analyses:", result.get("paper_analyses"))
+
+        print("\nmessages:")
+        for msg in result.get("messages", []):
+            print(type(msg).__name__, ":", msg.content[:100])
+
+        print("============================\n")
     except httpx.HTTPStatusError as exc:
         if exc.response.status_code != 429:
             raise
@@ -139,6 +237,9 @@ async def chat(request: ChatRequest):
         if interrupts
         else None
     )
+    print("===== INTERRUPT =====")
+    print(interrupt_payload)
+    print("=====================")
 
     return {
         "thread_id": thread_id,
@@ -160,7 +261,7 @@ async def chat_stream(request: ChatRequest):
     initial_state = {
         "user_query": request.message,
         "trace": [],
-        "messages": [],
+        "messages": [HumanMessage(content=request.message)],
     }
 
     async def event_generator():

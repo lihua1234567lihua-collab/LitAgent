@@ -9,6 +9,8 @@ OPENALEX_URL = "https://api.openalex.org/works"
 def search_papers(
     query: str,
     top_k: int = 5,
+    start_year: int | None = None,
+    end_year: int | None = None,
 ) -> list[dict]:
     """
     从 OpenAlex 检索真实学术论文。
@@ -24,11 +26,21 @@ def search_papers(
 
     # 防止 Agent 一次请求太多结果
     top_k = max(1, min(top_k, 10))
-
     params = {
         "search": query,
         "per_page": top_k,
     }
+
+    filters = []
+
+    if start_year is not None:
+        filters.append(f"from_publication_date:{start_year}-01-01")
+
+    if end_year is not None:
+        filters.append(f"to_publication_date:{end_year}-12-31")
+
+    if filters:
+        params["filter"] = ",".join(filters)
 
     response = httpx.get(
         OPENALEX_URL,
@@ -39,6 +51,7 @@ def search_papers(
     response.raise_for_status()
 
     data = response.json()
+
 
     papers = []
 
@@ -103,7 +116,21 @@ def search_papers(
         # -------------------------
         # 整理结果
         # -------------------------
+        best_oa_location = item.get("best_oa_location") or {}
 
+        paper_url = (
+            primary_location.get("landing_page_url")
+            or item.get("doi")
+            or item.get("id")
+        )
+
+        pdf_url = best_oa_location.get("pdf_url")
+
+        oa_url = (
+            best_oa_location.get("landing_page_url")
+            or open_access.get("oa_url")
+        )
+        
         paper = {
             "title": item.get("title"),
             "year": item.get(
@@ -120,6 +147,9 @@ def search_papers(
                 "is_oa"
             ),
             "openalex_id": item.get("id"),
+            "paper_url": paper_url,
+            "pdf_url": pdf_url,
+            "oa_url": oa_url,
         }
 
         papers.append(paper)

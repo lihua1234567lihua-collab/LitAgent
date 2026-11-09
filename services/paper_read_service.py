@@ -1,14 +1,13 @@
 """Multi-paper orchestration for the paper-read graph node."""
-
 import json
 from pathlib import Path
 from typing import Any, Callable
 
-from services.fulltext_resolver import (
+from services.local_pdf_resolver import (
     _safe_pdf_stem,
     resolve_paper_content,
 )
-from tools.paper_reader import read_paper
+from tools.paper_metadata import fetch_paper_metadata
 
 
 def _paper_key(paper: dict[str, Any]) -> str:
@@ -50,36 +49,38 @@ async def prepare_paper_read(
     contents = dict(paper_contents or {})
     analyses = dict(paper_analyses or {})
     missing: list[dict[str, Any]] = []
-    reader = paper_reader or read_paper
+    reader = paper_reader or fetch_paper_metadata
     resolve = resolver or resolve_paper_content
     workspace = Path(workspace_dir or Path("data") / "workspace" / thread_id)
     workspace.mkdir(parents=True, exist_ok=True)
 
     for paper in selected_papers:
         key = _paper_key(paper)
-        if contents.get(key, {}).get("status") == "ready":
+        cached = contents.get(key, {})
+
+        if cached.get("status") == "ready":
             continue
 
+
         paper_data = {**paper, **reader(paper)}
+
         resolved = await resolve(
             paper=paper_data,
             task=task,
             model=model,
-            workspace_dir=workspace,
-        )
+            workspace_dir=workspace,)
+        
         if resolved.get("status") == "need_fulltext":
-            missing.append(
-                {
-                    "title": paper.get("title"),
-                    "doi": paper.get("doi"),
-                    "openalex_id": paper.get("openalex_id"),
-                    "paper_id": paper_data.get("paper_id"),
-                    "source": paper_data.get("source") or paper_data.get("searcher"),
-                    "pdf_target_path": str(
-                        workspace / f"{_safe_pdf_stem(paper.get('title'))}.pdf"
-                    ),
-                }
-            )
+            contents[key] = resolved
+
+            missing.append({
+                "title": paper.get("title"),
+                "doi": paper.get("doi"),
+                "openalex_id": paper.get("openalex_id"),
+                "pdf_target_path": str(
+                    workspace / f"{_safe_pdf_stem(paper.get('title'))}.pdf"
+                ),
+            })
         else:
             contents[key] = resolved
 

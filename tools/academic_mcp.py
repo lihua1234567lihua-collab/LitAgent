@@ -4,7 +4,7 @@ import json
 from typing import Any
 from dotenv import load_dotenv
 from langchain_mcp_adapters.client import MultiServerMCPClient
-
+import asyncio
 
 load_dotenv()
 
@@ -85,12 +85,20 @@ async def read_paper(
         "paper_read"
     )
 
-    result = await tool.ainvoke(
-        {
-            "searcher": searcher,
-            "paper_id": paper_id,
-        }
-    )
+    try:
+        result = await asyncio.wait_for(
+            tool.ainvoke(
+                {
+                    "searcher": searcher,
+                    "paper_id": paper_id,
+                }
+            ),
+            timeout=60,
+        )
+    except asyncio.TimeoutError:
+        raise RuntimeError(
+            f"Academic MCP 读取论文超时: {searcher}/{paper_id}"
+        )
 
     text = _extract_text(result)
 

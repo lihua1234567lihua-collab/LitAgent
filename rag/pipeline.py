@@ -7,6 +7,7 @@ def answer_with_rag(
     user_query: str,
     model,
     search_query: str | None = None,
+    knowledge_paper_ids: list[int] | None = None,
     debug: bool = True,
 ) -> str:
 
@@ -31,10 +32,23 @@ def answer_with_rag(
 
     vector_store = get_vector_store()
 
+    search_filter = None
+
+    if knowledge_paper_ids:
+        search_filter = {
+            "knowledge_paper_id": {
+                "$in": knowledge_paper_ids
+            }
+        }
+
+    print("[RAG DEBUG] Paper IDs:", knowledge_paper_ids)
+    print("[RAG DEBUG] Chroma Filter:", search_filter)
+
     search_results = (
         vector_store.similarity_search_with_score(
             query=search_query,
             k=50,
+            filter=search_filter,
         )
     )
 
@@ -63,39 +77,6 @@ def answer_with_rag(
 
 
     # =========================
-    # 4. Debug 查看检索结果
-    # =========================
-
-    # if debug:
-
-    #     for i, chunk in enumerate(
-    #         results,
-    #         1,
-    #     ):
-
-            # print(f"\n--- Result {i} ---")
-
-            # print(
-            #     "Source:",
-            #     chunk.metadata.get("source")
-            # )
-
-            # print(
-            #     "Chroma Distance:",
-            #     chunk.metadata.get("distance")
-            # )
-
-            # print(
-            #     "Rerank Score:",
-            #     chunk.metadata.get("rerank_score")
-            # )
-
-            # print(
-            #     chunk.page_content[:800]
-            # )
-
-
-    # =========================
     # 5. 构造 Context
     # =========================
 
@@ -113,24 +94,24 @@ def answer_with_rag(
     # =========================
 
     prompt = f"""
-你是一个森林遥感科研助手。
+            你是一个森林遥感科研助手。
 
-请只根据下面提供的论文证据回答用户问题。
+            请只根据下面提供的论文证据回答用户问题。
 
-要求：
-1. 不要使用证据之外的信息。
-2. 如果证据不足，请明确说明。
-3. 优先使用能够直接回答问题的方法描述。
-4. 回答简洁、准确。
+            要求：
+            1. 不要使用证据之外的信息。
+            2. 如果证据不足，请明确说明。
+            3. 优先使用能够直接回答问题的方法描述。
+            4. 回答简洁、准确。
 
-论文证据：
+            论文证据：
 
-{context}
+            {context}
 
-用户问题：
+            用户问题：
 
-{user_query}
-"""
+            {user_query}
+            """
 
     response = model.invoke(
         [

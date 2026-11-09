@@ -92,7 +92,7 @@
 
 **Files:**
 - Modify: `mini-agent/agent/graph.py`
-- Modify only if required for an existing-interface cleanup: `mini-agent/services/fulltext_resolver.py`, `mini-agent/tools/paper_reader.py`, `mini-agent/agent/paper_search_pipeline.py`, `mini-agent/rag/pipeline.py`
+- Modify only if required for an existing-interface cleanup: `mini-agent/services/local_pdf_resolver.py`, `mini-agent/tools/paper_reader.py`, `mini-agent/agent/paper_search_pipeline.py`, `mini-agent/rag/pipeline.py`
 
 **Interfaces:**
 - Nodes: `router_node`, `planner_node`, `executor_node`, `direct_answer_node`, `rewrite_query_node`, `rag_node`, `paper_search_node`, `paper_read_node`, `reasoning_node`, `final_answer_node`, `approval_node`, `cancel_node`.
