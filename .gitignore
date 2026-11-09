@@ -8,3 +8,26 @@ wheels/
 
 # Virtual environments
 .venv
+data/checkpoints.sqlite*
+tools/downloads/
+
+# Uploaded PDF files
+/data/papers/
+
+# Chroma vector database
+/data/chroma_db/
+
+# Environment variables and secrets
+.env
+.env.*
+!.env.example
+
+# Java build outputs
+**/target/
+
+# IDE files
+.idea/
+.vscode/
+
+# Spring Boot local database configuration
+/backend/knowledge-backend/src/main/resources/application.properties

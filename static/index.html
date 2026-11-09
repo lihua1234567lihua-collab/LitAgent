@@ -1,0 +1,798 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>LitAgent</title>
+  <style>
+    body { font-family: sans-serif; margin: 0; color: #202123; }
+    .chat-layout { display: flex; gap: 0; height: 100vh; min-height: 420px; }
+    .sidebar { box-sizing: border-box; display: flex; flex: 0 0 260px; flex-direction: column; width: 260px; height: 100vh; padding: 8px 10px; overflow: hidden; background: #f7f7f8; }
+    .sidebar-brand { display: flex; flex: 0 0 48px; align-items: center; height: 48px; padding: 0 8px; font-size: 19px; font-weight: 600; }
+    .sidebar button { color: inherit; font-family: inherit; }
+    #new-chat-button { display: flex; flex: 0 0 40px; align-items: center; gap: 10px; width: 100%; height: 40px; margin: 4px 0 0; padding: 0 9px; border: 0; border-radius: 8px; background: transparent; font-size: 14px; text-align: left; cursor: pointer; }
+    #new-chat-button:hover { background: #ececef; }
+    #open-upload-modal-button { display: flex; flex: 0 0 40px; align-items: center; gap: 10px; width: 100%; height: 40px; margin: 2px 0 0; padding: 0 9px; border: 0; border-radius: 8px; background: transparent; font-size: 14px; text-align: left; cursor: pointer; }
+    #open-upload-modal-button:hover { background: #ececef; }
+    .upload-launcher-icon { display: inline-flex; width: 18px; height: 18px; align-items: center; justify-content: center; }
+    .new-chat-icon { width: 18px; font-size: 19px; line-height: 1; text-align: center; }
+    .sidebar-section-label { flex: 0 0 auto; margin: 18px 0 6px; padding-left: 8px; color: #777; font-size: 12px; line-height: 20px; }
+    #conversation-list { display: grid; flex: 1 1 auto; align-content: start; gap: 2px; min-height: 0; margin-top: 0; overflow-y: auto; scrollbar-width: thin; scrollbar-color: #c5c5c5 transparent; }
+    #conversation-list::-webkit-scrollbar { width: 6px; }
+    #conversation-list::-webkit-scrollbar-track { background: transparent; }
+    #conversation-list::-webkit-scrollbar-thumb { border-radius: 999px; background: #c5c5c5; }
+    #conversation-list::-webkit-scrollbar-thumb:hover { background: #aaa; }
+    .conversation-item { display: flex; align-items: center; gap: 2px; min-width: 0; height: 38px; padding: 0 4px 0 8px; position: relative; border-radius: 8px; }
+    .conversation-item:hover { background: #ececef; }
+    .conversation-item.active { background: #e9e9eb; }
+    .conversation-button { flex: 1; min-width: 0; height: 100%; margin: 0; padding: 0; overflow: hidden; border: 0; border-radius: 0; background: transparent; font-size: 14px; text-align: left; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
+    .conversation-button:hover { background: transparent; }
+    .conversation-menu-trigger { flex: 0 0 30px; width: 30px; height: 30px; margin: 0; padding: 4px; border: 0; border-radius: 6px; background: transparent; font-size: 18px; line-height: 1; opacity: 0.15; cursor: pointer; }
+    .conversation-item:hover .conversation-menu-trigger,
+    .conversation-item:focus-within .conversation-menu-trigger { opacity: 1; background: #dedee1; }
+    .conversation-menu { position: absolute; z-index: 2; top: calc(100% + 2px); right: 4px; min-width: 120px; padding: 4px; background: #fff; border: 1px solid #ddd; border-radius: 8px; box-shadow: 0 4px 14px #0002; }
+    .conversation-menu[hidden] { display: none; }
+    .conversation-menu button { width: 100%; margin: 0; padding: 8px 10px; border: 0; border-radius: 5px; background: transparent; text-align: left; cursor: pointer; }
+    .conversation-menu button:hover { background: #f2f2f2; }
+    .conversation-menu .conversation-delete-action { color: #b42318; }
+    .conversation-rename-input { flex: 1; min-width: 0; padding: 7px 9px; border: 1px solid #888; border-radius: 6px; font: inherit; outline: 2px solid #bbb; }
+    .chat-main { display: flex; flex: 1; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden; }
+    #message-list { flex: 1; min-height: 0; overflow-y: auto; padding: 12px max(16px, calc((100% - 900px) / 2)); scroll-behavior: smooth; }
+    .message-row { display: flex; margin: 20px 0; }
+    .message-row.user { justify-content: flex-end; }
+    .message-row.assistant { justify-content: flex-start; }
+    .upload-result-row .message-bubble { width: min(100%, 820px); padding: 0; }
+    .message-bubble { width: fit-content; max-width: min(82%, 760px); padding: 12px 16px; border-radius: 18px; overflow-wrap: anywhere; }
+    .message-row.user .message-bubble { background: #f2f2f2; }
+    .message-row.assistant .message-bubble { max-width: min(100%, 820px); padding-left: 0; }
+    .message-content { font-size: 15px; line-height: 1.7; }
+    .message-content > :first-child { margin-top: 0; }
+    .message-content > :last-child { margin-bottom: 0; }
+    .message-content h1, .message-content h2, .message-content h3 { line-height: 1.3; margin: 1.25em 0 0.55em; }
+    .message-content p, .message-content ul, .message-content ol, .message-content blockquote { margin: 0.7em 0; }
+    .message-content ul, .message-content ol { padding-left: 1.5em; }
+    .message-content blockquote { border-left: 3px solid #d1d5db; padding-left: 12px; color: #555; }
+    .message-content pre { overflow-x: auto; padding: 14px 16px; background: #f6f6f6; border: 1px solid #e5e5e5; border-radius: 10px; }
+    .message-content code { font-family: Consolas, monospace; font-size: 0.92em; }
+    .message-content :not(pre) > code { padding: 2px 5px; background: #f1f1f1; border-radius: 5px; }
+    .message-content table { display: block; overflow-x: auto; border-collapse: collapse; max-width: 100%; }
+    .message-content th, .message-content td { border: 1px solid #ddd; padding: 6px 8px; }
+    .message-content a { color: #2563a6; }
+    #chat-form { flex: 0 0 auto; padding: 10px 14px 8px; background: #fff; border: 1px solid #dedede; border-radius: 18px; box-shadow: 0 2px 12px #0000000a; }
+    #paper-upload-dialog { box-sizing: border-box; width: min(580px, calc(100vw - 24px)); max-width: none; max-height: calc(100vh - 24px); margin: auto; padding: 0; overflow: hidden; border: 1px solid #e5e5e5; border-radius: 16px; background: #fff; box-shadow: 0 20px 60px #0003; }
+    #paper-upload-dialog::backdrop { background: #11182766; backdrop-filter: blur(2px); }
+    .upload-modal-header { display: flex; align-items: center; justify-content: space-between; padding: 16px 20px; border-bottom: 1px solid #eee; }
+    .upload-modal-header h2 { margin: 0; font-size: 19px; }
+    .upload-modal-close { width: 34px; height: 34px; margin: 0 !important; padding: 0 !important; border: 0; border-radius: 8px; background: transparent; color: #666; font-size: 24px; line-height: 1; }
+    .upload-modal-close:hover { background: #f2f2f2; }
+    #paper-upload-form { display: flex; flex-direction: column; min-height: 0; max-height: calc(100vh - 82px); margin: 0; }
+    .upload-modal-body { min-height: 0; overflow-y: auto; padding: 16px 20px; }
+    .upload-owner-note { margin: 0 0 14px; color: #666; font-size: 13px; line-height: 1.5; }
+    .upload-field { margin: 0 0 14px; }
+    .upload-field label { display: block; margin-bottom: 6px; font-size: 13px; font-weight: 600; }
+    #paper-upload-form input, #paper-upload-form select { box-sizing: border-box; display: block; width: 100%; min-height: 40px; margin: 0; padding: 8px 10px; border: 1px solid #d8d8d8; border-radius: 8px; background: #fff; font: inherit; font-size: 14px; }
+    #paper-upload-form input:focus, #paper-upload-form select:focus { outline: 2px solid #b8c8e8; border-color: #7c91bd; }
+    .upload-modal-footer { display: flex; justify-content: flex-end; gap: 8px; padding: 12px 20px; border-top: 1px solid #eee; }
+    .upload-modal-footer button { margin: 0 !important; padding: 8px 14px !important; border: 0; border-radius: 8px; background: #f0f0f0; }
+    #paper-upload-button { color: #fff; background: #202123; }
+    #paper-upload-form button:disabled { opacity: 0.55; cursor: wait; }
+    #paper-upload-status:empty { display: none; }
+    .upload-state { margin-top: 10px; padding: 10px 12px; border-radius: 9px; white-space: pre-wrap; overflow-wrap: anywhere; }
+    .upload-loading { display: flex; align-items: center; gap: 9px; color: #555; background: #f5f5f5; }
+    .upload-spinner { width: 15px; height: 15px; flex: 0 0 15px; border: 2px solid #d5d5d5; border-top-color: #555; border-radius: 50%; animation: upload-spin 0.8s linear infinite; }
+    @keyframes upload-spin { to { transform: rotate(360deg); } }
+    .upload-error { color: #9f1d20; background: #fff1f0; }
+    .upload-result-card { width: 100%; box-sizing: border-box; padding: 14px; border: 1px solid #e4e8e4; border-radius: 12px; background: #fff; overflow-wrap: anywhere; }
+    .upload-result-heading { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; color: #18743b; font-weight: 600; }
+    .upload-success-icon { display: inline-grid; width: 22px; height: 22px; flex: 0 0 22px; place-items: center; border-radius: 50%; color: #fff; background: #218838; }
+    .upload-result-title { margin: 0 0 10px; font-size: 16px; line-height: 1.5; overflow-wrap: anywhere; }
+    .upload-result-primary { display: grid; gap: 6px; margin: 0; color: #444; font-size: 13px; }
+    .upload-result-primary span { color: #666; }
+    .upload-result-details { margin-top: 12px; border-top: 1px solid #eee; padding-top: 10px; }
+    .upload-result-details summary { color: #555; font-size: 13px; cursor: pointer; }
+    .upload-result-list { display: grid; grid-template-columns: minmax(88px, 120px) minmax(0, 1fr); gap: 7px 10px; margin: 0; font-size: 13px; }
+    .upload-result-list dt { color: #666; }
+    .upload-result-list dd { min-width: 0; margin: 0; overflow-wrap: anywhere; }
+    .upload-path-value { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 6px; }
+    .upload-path { min-width: 0; overflow-wrap: anywhere; white-space: normal; font-family: Consolas, monospace; }
+    .upload-copy-button { flex: 0 0 auto; margin: 0 !important; padding: 4px 7px !important; font-size: 12px; }
+    .upload-copy-feedback { flex-basis: 100%; color: #555; font-size: 12px; }
+    @media (max-width: 700px) { .upload-result-list { grid-template-columns: minmax(72px, 90px) minmax(0, 1fr); } .upload-modal-header, .upload-modal-body, .upload-modal-footer { padding-left: 14px; padding-right: 14px; } }
+    #message { display: block; width: 100%; min-height: 54px; max-height: 220px; resize: vertical; box-sizing: border-box; padding: 8px 2px; border: 0; outline: 0; font: inherit; line-height: 1.5; }
+    .composer-actions { display: flex; justify-content: flex-end; gap: 8px; }
+    button { margin: 8px 8px 8px 0; padding: 8px 14px; cursor: pointer; }
+    .composer-actions button { margin: 4px 0 0; border: 0; border-radius: 999px; }
+    #send-button { color: #fff; background: #202123; }
+    #send-button:disabled, #stop-button:disabled { opacity: 0.45; cursor: default; }
+    #error { color: #b00020; white-space: pre-wrap; }
+  </style>
+</head>
+<body>
+  <div class="chat-layout">
+    <aside class="sidebar">
+      <div class="sidebar-brand">
+        <span>LitAgent</span>
+      </div>
+      <button id="new-chat-button" type="button">
+        <span class="new-chat-icon" aria-hidden="true">＋</span>
+        <span>新建聊天</span>
+      </button>
+      <button id="open-upload-modal-button" type="button" aria-haspopup="dialog" aria-controls="paper-upload-dialog">
+        <span class="upload-launcher-icon" aria-hidden="true">📄</span>
+        <span>上传论文</span>
+      </button>
+      <div class="sidebar-section-label">最近聊天</div>
+      <div id="conversation-list" aria-label="聊天列表"></div>
+    </aside>
+
+    <main class="chat-main">
+      <div id="message-list" aria-live="polite"></div>
+      <div id="error"></div>
+      <form id="chat-form">
+        <textarea id="message" placeholder="请输入需求"></textarea>
+        <div class="composer-actions">
+          <button id="send-button" type="submit">发送</button>
+          <button id="stop-button" type="button" disabled>停止</button>
+        </div>
+      </form>
+    </main>
+  </div>
+
+  <dialog id="paper-upload-dialog" aria-labelledby="paper-upload-title">
+    <div class="upload-modal-header">
+      <h2 id="paper-upload-title">上传论文</h2>
+      <button id="paper-upload-close" class="upload-modal-close" type="button" aria-label="关闭上传窗口">×</button>
+    </div>
+    <form id="paper-upload-form" enctype="multipart/form-data">
+      <div class="upload-modal-body">
+        <p class="upload-owner-note">用户 ID 由服务端确定，上传成功后会显示在结果详情中。</p>
+        <div class="upload-field">
+          <label for="paper-file">PDF 文件</label>
+          <input id="paper-file" name="file" type="file" accept=".pdf,application/pdf" required>
+        </div>
+        <div class="upload-field">
+          <label for="paper-topic">所属论文库</label>
+          <select id="paper-topic" name="topic_id" required>
+            <option value="1">LiDAR</option>
+          </select>
+        </div>
+        <div class="upload-field">
+          <label for="paper-title">论文标题</label>
+          <input id="paper-title" name="title" type="text" required>
+        </div>
+        <div class="upload-field">
+          <label for="paper-doi">DOI</label>
+          <input id="paper-doi" name="doi" type="text" required>
+        </div>
+        <div id="paper-upload-status" aria-live="polite"></div>
+      </div>
+      <div class="upload-modal-footer">
+        <button id="paper-upload-cancel" type="button">取消</button>
+        <button id="paper-upload-button" type="submit">上传并收藏</button>
+      </div>
+    </form>
+  </dialog>
+
+  <script
+    src="https://cdn.jsdelivr.net/npm/marked@18.1.1/lib/marked.umd.js"
+    onerror="console.error('[Markdown] Failed to load marked.js from jsDelivr')"
+  ></script>
+  <script
+    src="https://cdn.jsdelivr.net/npm/dompurify@3.4.16/dist/purify.min.js"
+    onerror="console.error('[Markdown] Failed to load DOMPurify from jsDelivr')"
+  ></script>
+  <script>
+    const STORAGE_KEY = 'litagent.conversations.v1';
+    const form = document.getElementById('chat-form');
+    const messageInput = document.getElementById('message');
+    const sendButton = document.getElementById('send-button');
+    const stopButton = document.getElementById('stop-button');
+    const messageList = document.getElementById('message-list');
+    const conversationList = document.getElementById('conversation-list');
+    const error = document.getElementById('error');
+    const paperUploadForm = document.getElementById('paper-upload-form');
+    const paperUploadStatus = document.getElementById('paper-upload-status');
+    const paperUploadButton = document.getElementById('paper-upload-button');
+    const paperUploadDialog = document.getElementById('paper-upload-dialog');
+    const openUploadModalButton = document.getElementById('open-upload-modal-button');
+    const closeUploadModalButton = document.getElementById('paper-upload-close');
+    const cancelUploadButton = document.getElementById('paper-upload-cancel');
+    let controller = null;
+    let uploadInProgress = false;
+    let uploadConversationId = null;
+
+    function newId() {
+      return crypto.randomUUID();
+    }
+
+    function loadSavedState() {
+      try {
+        const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}');
+        return {
+          conversations: Array.isArray(saved.conversations)
+            ? saved.conversations
+            : [],
+          activeConversationId: saved.activeConversationId || null,
+        };
+      } catch (_error) {
+        return { conversations: [], activeConversationId: null };
+      }
+    }
+
+    const savedState = loadSavedState();
+    let conversations = savedState.conversations;
+    let activeConversationId = savedState.activeConversationId;
+
+    function persistState() {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({
+        conversations,
+        activeConversationId,
+      }));
+    }
+
+    function getActiveConversation() {
+      return conversations.find(
+        (conversation) => conversation.id === activeConversationId
+      );
+    }
+
+    function renderConversations() {
+      conversationList.replaceChildren();
+      for (const conversation of conversations) {
+        const item = document.createElement('div');
+        item.className = 'conversation-item';
+        if (conversation.id === activeConversationId) {
+          item.classList.add('active');
+        }
+
+        const titleButton = document.createElement('button');
+        titleButton.type = 'button';
+        titleButton.className = 'conversation-button';
+        titleButton.textContent = conversation.title || '新聊天';
+        titleButton.title = conversation.title || '新聊天';
+        titleButton.addEventListener('click', () => {
+          activeConversationId = conversation.id;
+          persistState();
+          render();
+        });
+
+        const menuTrigger = document.createElement('button');
+        menuTrigger.type = 'button';
+        menuTrigger.className = 'conversation-menu-trigger';
+        menuTrigger.textContent = '⋯';
+        menuTrigger.setAttribute('aria-label', '聊天选项');
+        menuTrigger.setAttribute('aria-haspopup', 'menu');
+        menuTrigger.setAttribute('aria-expanded', 'false');
+
+        const menu = document.createElement('div');
+        menu.className = 'conversation-menu';
+        menu.setAttribute('role', 'menu');
+        menu.hidden = true;
+
+        const renameButton = document.createElement('button');
+        renameButton.type = 'button';
+        renameButton.textContent = '重命名';
+        renameButton.setAttribute('role', 'menuitem');
+        renameButton.addEventListener('click', () => {
+          menu.hidden = true;
+          beginRename(conversation, titleButton);
+        });
+
+        const deleteButton = document.createElement('button');
+        deleteButton.type = 'button';
+        deleteButton.className = 'conversation-delete-action';
+        deleteButton.textContent = '\u5220\u9664\u804a\u5929';
+        deleteButton.setAttribute('role', 'menuitem');
+        deleteButton.addEventListener('click', () => {
+          menu.hidden = true;
+          menuTrigger.setAttribute('aria-expanded', 'false');
+          deleteConversation(conversation);
+        });
+        menu.append(renameButton, deleteButton);
+
+        menuTrigger.addEventListener('click', (event) => {
+          event.stopPropagation();
+          const shouldOpen = menu.hidden;
+          conversationList.querySelectorAll('.conversation-menu').forEach(
+            (otherMenu) => { otherMenu.hidden = true; },
+          );
+          conversationList.querySelectorAll('.conversation-menu-trigger').forEach(
+            (otherTrigger) => otherTrigger.setAttribute('aria-expanded', 'false'),
+          );
+          menu.hidden = !shouldOpen;
+          menuTrigger.setAttribute('aria-expanded', String(shouldOpen));
+        });
+
+        item.append(titleButton, menuTrigger, menu);
+        conversationList.append(item);
+      }
+    }
+
+    function deleteConversation(conversation) {
+      const title = conversation.title || '\u65b0\u804a\u5929';
+      const confirmed = window.confirm(
+        `\u786e\u5b9a\u5220\u9664\u201c${title}\u201d\u5417\uff1f`
+      );
+      if (!confirmed) return;
+
+      const wasActive = conversation.id === activeConversationId;
+      conversations = conversations.filter(
+        (item) => item.id !== conversation.id
+      );
+
+      if (wasActive && conversations.length > 0) {
+        activeConversationId = conversations[0].id;
+      } else if (wasActive) {
+        createConversation();
+        return;
+      }
+
+      persistState();
+      if (wasActive) {
+        render();
+      } else {
+        renderConversations();
+      }
+    }
+
+    function beginRename(conversation, titleButton) {
+      const originalTitle = (conversation.title || '新聊天').trim() || '新聊天';
+      const input = document.createElement('input');
+      input.type = 'text';
+      input.className = 'conversation-rename-input';
+      input.value = originalTitle;
+      input.setAttribute('aria-label', '聊天标题');
+      titleButton.replaceWith(input);
+
+      let finished = false;
+      const finish = (save) => {
+        if (finished) return;
+        finished = true;
+        if (save) {
+          conversation.title = input.value.trim() || originalTitle;
+          persistState();
+        }
+        renderConversations();
+      };
+
+      input.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter') {
+          event.preventDefault();
+          finish(true);
+        } else if (event.key === 'Escape') {
+          event.preventDefault();
+          finish(false);
+        }
+      });
+      input.addEventListener('blur', () => finish(true));
+      input.focus();
+      input.select();
+    }
+
+    if (typeof window.marked?.parse !== 'function') {
+      console.error('[Markdown] marked.js is unavailable or did not expose marked.parse');
+    }
+    if (typeof window.DOMPurify?.sanitize !== 'function') {
+      console.error('[Markdown] DOMPurify is unavailable or did not expose sanitize');
+    }
+
+    function renderAssistantMarkdown(markdown, element) {
+      if (typeof window.marked?.parse !== 'function') {
+        throw new Error('marked.parse is unavailable');
+      }
+      if (typeof window.DOMPurify?.sanitize !== 'function') {
+        throw new Error('DOMPurify.sanitize is unavailable');
+      }
+
+      const html = window.marked.parse(markdown || '');
+      element.innerHTML = window.DOMPurify.sanitize(
+        html,
+        { USE_PROFILES: { html: true } },
+      );
+    }
+
+    function renderMessages() {
+      messageList.replaceChildren();
+      const conversation = getActiveConversation();
+      for (const message of conversation?.messages || []) {
+        const row = document.createElement('div');
+        row.className = `message-row ${message.role}`;
+
+        const bubble = document.createElement('div');
+        bubble.className = 'message-bubble';
+
+        const content = document.createElement('div');
+        content.className = 'message-content';
+        if (message.type === 'paper_upload_result') {
+          row.classList.add('upload-result-row');
+          bubble.classList.add('upload-result-bubble');
+          content.append(createUploadResultCard(message.content || {}));
+        } else if (message.role === 'assistant') {
+          try {
+            renderAssistantMarkdown(message.content, content);
+          } catch (renderError) {
+            console.error('[Markdown] Failed to render Assistant message', renderError);
+          }
+        } else {
+          content.textContent = message.content || '';
+        }
+
+        bubble.append(content);
+        row.append(bubble);
+        messageList.append(row);
+      }
+      requestAnimationFrame(() => {
+        messageList.scrollTop = messageList.scrollHeight;
+      });
+    }
+
+    function render() {
+      renderConversations();
+      renderMessages();
+    }
+
+    function createConversation() {
+      const conversation = {
+        id: newId(),
+        thread_id: null,
+        title: '新聊天',
+        messages: [],
+      };
+      conversations.unshift(conversation);
+      activeConversationId = conversation.id;
+      persistState();
+      render();
+      messageInput.focus();
+    }
+
+    async function requestChat(text, conversation, resume = null) {
+      const body = { 
+      message: text,
+      user_id:3, 
+      };
+      if (conversation.thread_id) body.thread_id = conversation.thread_id;
+      // 告诉后端当前会话最近上传的是哪篇论文
+      if (Number.isInteger(conversation.latestUploadedPaperId)) {
+          body.latest_uploaded_paper_id = conversation.latestUploadedPaperId;
+      }
+      
+      if (resume !== null) body.resume = resume;
+
+      const response = await fetch('/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+        signal: controller.signal,
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.detail || '请求失败');
+      }
+
+      if (data.thread_id) {
+        conversation.thread_id = data.thread_id;
+        persistState();
+      }
+      return data;
+    }
+
+    async function runChat(text, conversation) {
+      let data = await requestChat(text, conversation);
+
+      while (data.interrupt?.type === 'external_search_approval') {
+        const approved = window.confirm(
+          `${data.interrupt.message}\n\n${data.interrupt.query}`
+        );
+        data = await requestChat(text, conversation, approved);
+      }
+
+      let assistantContent;
+      if (data.interrupt) {
+        assistantContent = buildInterruptMessage(data.interrupt);
+      } else if (data.answer) {
+        assistantContent = data.answer;
+      } else {
+        assistantContent = '当前没有返回回答。';
+      }
+
+      conversation.messages.push({
+        role: 'assistant',
+        content: assistantContent,
+      });
+      persistState();
+      renderMessages();
+    }
+
+    function buildInterruptMessage(interrupt) {
+      if (interrupt.type === 'fulltext_required') {
+        const titles = (Array.isArray(interrupt.papers) ? interrupt.papers : [])
+          .map((paper) => paper?.title)
+          .filter((title) => typeof title === 'string' && title.trim())
+          .map((title, index) => `${index + 1}. ${title.trim()}`);
+        const paperList = titles.length
+          ? `\n\n需要补充全文：\n${titles.join('\n')}`
+          : '';
+        return `${interrupt.message || ''}${paperList}`.trim();
+      }
+
+      return interrupt.message || '当前任务需要进一步处理。';
+    }
+
+    function appendUploadDetail(list, label, value) {
+      const term = document.createElement('dt');
+      term.textContent = label;
+      const description = document.createElement('dd');
+      if (typeof value === 'string') {
+        description.textContent = value;
+      } else {
+        description.append(value);
+      }
+      list.append(term, description);
+    }
+
+    function displayUploadValue(value) {
+      return value === null || value === undefined || value === ''
+        ? '未返回'
+        : String(value);
+    }
+
+    function renderUploadLoading() {
+      const state = document.createElement('div');
+      state.className = 'upload-state upload-loading';
+      state.setAttribute('role', 'status');
+      const spinner = document.createElement('span');
+      spinner.className = 'upload-spinner';
+      spinner.setAttribute('aria-hidden', 'true');
+      const message = document.createElement('span');
+      message.textContent = '正在上传并解析 PDF…';
+      state.append(spinner, message);
+      paperUploadStatus.replaceChildren(state);
+    }
+
+    function renderUploadError(message) {
+      const state = document.createElement('div');
+      state.className = 'upload-state upload-error';
+      state.setAttribute('role', 'alert');
+      state.textContent = `上传失败：${message}`;
+      paperUploadStatus.replaceChildren(state);
+    }
+
+    function createUploadResultCard(data) {
+      const card = document.createElement('section');
+      card.className = 'upload-result-card';
+      card.setAttribute('aria-label', '论文上传结果');
+
+      const heading = document.createElement('div');
+      heading.className = 'upload-result-heading';
+      const icon = document.createElement('span');
+      icon.className = 'upload-success-icon';
+      icon.setAttribute('aria-hidden', 'true');
+      icon.textContent = '✓';
+      const successText = document.createElement('span');
+      successText.textContent = '论文上传并存储成功';
+      heading.append(icon, successText);
+
+      const title = document.createElement('h3');
+      title.className = 'upload-result-title';
+      title.textContent = displayUploadValue(data.title);
+
+      const primary = document.createElement('p');
+      primary.className = 'upload-result-primary';
+      const topic = document.createElement('div');
+      const topicName = data.topicName || data.topic_name;
+      topic.textContent = `所属 Topic：${topicName ? `${topicName}（ID ${displayUploadValue(data.topicId)}）` : displayUploadValue(data.topicId)}`;
+      const chunks = document.createElement('div');
+      chunks.textContent = `PDF 解析：${data.chunk_count === null || data.chunk_count === undefined ? '未返回' : `${data.chunk_count} 个文本块`}`;
+      primary.append(topic, chunks);
+
+      const disclosure = document.createElement('details');
+      disclosure.className = 'upload-result-details';
+      const summary = document.createElement('summary');
+      summary.textContent = '查看详细信息';
+      const details = document.createElement('dl');
+      details.className = 'upload-result-list';
+      appendUploadDetail(details, '原始文件名', displayUploadValue(data.filename));
+      appendUploadDetail(details, 'Paper ID', displayUploadValue(data.paperId));
+      appendUploadDetail(details, '用户 ID', displayUploadValue(data.userId));
+      appendUploadDetail(details, 'DOI', displayUploadValue(data.doi));
+
+      const pathValue = document.createElement('div');
+      pathValue.className = 'upload-path-value';
+      const path = displayUploadValue(data.pdf_path);
+      const pathText = document.createElement('code');
+      pathText.className = 'upload-path';
+      pathText.textContent = path;
+      pathValue.append(pathText);
+
+      if (path !== '未返回') {
+        const copyButton = document.createElement('button');
+        copyButton.type = 'button';
+        copyButton.className = 'upload-copy-button';
+        copyButton.textContent = '复制路径';
+        const feedback = document.createElement('span');
+        feedback.className = 'upload-copy-feedback';
+        copyButton.addEventListener('click', () => {
+          copyPdfPath(path, copyButton, feedback);
+        });
+        pathValue.append(copyButton, feedback);
+      }
+      appendUploadDetail(details, 'PDF 存储位置', pathValue);
+
+      disclosure.append(summary, details);
+      card.append(heading, title, primary, disclosure);
+      return card;
+    }
+
+    function renderUploadSuccess(data) {
+      const targetConversation = conversations.find(
+        (conversation) => conversation.id === uploadConversationId
+      );
+      if (!targetConversation) {
+        throw new Error('上传开始时的聊天已不存在，无法添加结果卡片。');
+      }
+      //记录当前聊天最近上传的论文
+      targetConversation.latestUploadedPaperId = data.paperId;
+      targetConversation.messages.push({
+        role: 'assistant',
+        type: 'paper_upload_result',
+        content: data,
+      });
+      persistState();
+      if (activeConversationId === targetConversation.id) {
+        renderMessages();
+      }
+      paperUploadStatus.replaceChildren();
+      paperUploadDialog.close();
+    }
+
+    async function copyPdfPath(path, button, feedback) {
+      try {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          await navigator.clipboard.writeText(path);
+        } else {
+          const temporaryInput = document.createElement('textarea');
+          temporaryInput.value = path;
+          temporaryInput.setAttribute('readonly', '');
+          temporaryInput.style.position = 'fixed';
+          temporaryInput.style.opacity = '0';
+          document.body.append(temporaryInput);
+          temporaryInput.select();
+          const copied = document.execCommand('copy');
+          temporaryInput.remove();
+          if (!copied) throw new Error('clipboard unavailable');
+        }
+        button.textContent = '已复制';
+        feedback.textContent = '';
+      } catch (_copyError) {
+        feedback.textContent = '复制失败，请手动复制路径。';
+      }
+    }
+
+    function setUploadBusy(isBusy) {
+      paperUploadForm.querySelectorAll('input, select').forEach((control) => {
+        control.disabled = isBusy;
+      });
+      paperUploadButton.disabled = isBusy;
+      closeUploadModalButton.disabled = isBusy;
+      cancelUploadButton.disabled = isBusy;
+      paperUploadButton.textContent = isBusy ? '上传中…' : '上传并收藏';
+    }
+
+    openUploadModalButton.addEventListener('click', () => {
+      const conversation = getActiveConversation();
+      if (!conversation || uploadInProgress) return;
+      uploadConversationId = conversation.id;
+      paperUploadStatus.replaceChildren();
+      paperUploadDialog.showModal();
+      document.getElementById('paper-file').focus();
+    });
+
+    closeUploadModalButton.addEventListener('click', () => {
+      if (!uploadInProgress) paperUploadDialog.close();
+    });
+    cancelUploadButton.addEventListener('click', () => {
+      if (!uploadInProgress) paperUploadDialog.close();
+    });
+    paperUploadDialog.addEventListener('click', (event) => {
+      if (event.target === paperUploadDialog && !uploadInProgress) {
+        paperUploadDialog.close();
+      }
+    });
+    paperUploadDialog.addEventListener('cancel', (event) => {
+      if (uploadInProgress) event.preventDefault();
+    });
+    paperUploadDialog.addEventListener('close', () => {
+      uploadConversationId = null;
+      openUploadModalButton.focus();
+    });
+
+    paperUploadForm.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      if (uploadInProgress) return;
+
+      const formData = new FormData(paperUploadForm);
+      uploadInProgress = true;
+      setUploadBusy(true);
+      renderUploadLoading();
+
+      try {
+        const response = await fetch('/papers/upload', {
+          method: 'POST',
+          body: formData,
+        });
+        const data = await response.json().catch(() => null);
+
+        if (!response.ok) {
+          const validationDetails = Array.isArray(data?.detail)
+            ? data.detail.map((item) => item?.msg).filter(Boolean).join('；')
+            : '';
+          const reason = typeof data?.detail === 'string'
+            ? data.detail
+            : validationDetails || (typeof data?.message === 'string'
+              ? data.message
+              : `服务器返回 HTTP ${response.status}`);
+          throw new Error(reason);
+        }
+        if (!data || data.status !== 'collected') {
+          throw new Error(data?.detail || '服务端未确认论文已存储。');
+        }
+
+        renderUploadSuccess(data);
+      } catch (uploadError) {
+        renderUploadError(uploadError.message || '请检查网络后重试。');
+      } finally {
+        uploadInProgress = false;
+        setUploadBusy(false);
+      }
+    });
+
+    document.getElementById('new-chat-button').addEventListener(
+      'click',
+      createConversation,
+    );
+
+    form.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const text = messageInput.value.trim();
+      const conversation = getActiveConversation();
+      if (!text || !conversation) return;
+
+      conversation.messages.push({ role: 'user', content: text });
+      persistState();
+      renderMessages();
+      messageInput.value = '';
+      error.textContent = '';
+
+      controller = new AbortController();
+      sendButton.disabled = true;
+      stopButton.disabled = false;
+
+      try {
+        await runChat(text, conversation);
+      } catch (err) {
+        error.textContent = err.name === 'AbortError'
+          ? '请求已停止。'
+          : err.message;
+      } finally {
+        controller = null;
+        sendButton.disabled = false;
+        stopButton.disabled = true;
+      }
+    });
+
+    stopButton.addEventListener('click', () => {
+      if (controller) controller.abort();
+    });
+
+    if (!getActiveConversation()) {
+      if (conversations.length) {
+        activeConversationId = conversations[0].id;
+      } else {
+        createConversation();
+      }
+    }
+    persistState();
+    render();
+  </script>
+</body>
+</html>

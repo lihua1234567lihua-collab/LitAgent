@@ -1,21 +1,17 @@
 import asyncio
 
-from tools.paper_search_mcp import (
-    download_paper_with_fallback,
-)
+from tools.paper_search_mcp import get_paper_mcp_tools
 
 
 async def main():
+    tools = await get_paper_mcp_tools()
 
-    result = await download_paper_with_fallback(
-        source="arxiv",
-        paper_id="1706.03762",
-        doi="",
-        title="Attention Is All You Need",
-    )
+    print("\n===== MCP Tools =====")
 
-    print("\n===== Download Result =====")
-    print(result)
+    for tool in tools:
+        print(f"\nTool: {tool.name}")
+        print(f"Description: {tool.description}")
+        print(f"Args Schema: {tool.args_schema}")
 
 
 if __name__ == "__main__":

@@ -7,6 +7,7 @@ PERSIST_DIRECTORY = "data/chroma_db"
 
 COLLECTION_NAME = "forest_papers"
 
+##加载 EmbeddingModel→ 连接 data/chroma_db→ 使用 forest_papers collection→ 返回 vector_store
 
 def get_vector_store():
 

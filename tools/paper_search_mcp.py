@@ -55,29 +55,53 @@ async def get_paper_mcp_tool(tool_name: str):
         f"找不到 MCP Tool: {tool_name}"
     )
 
+def _get_mcp_text(result) -> str:
+    if isinstance(result, list):
+        parts = []
+
+        for item in result:
+            if isinstance(item, dict) and item.get("type") == "text":
+                parts.append(item.get("text", ""))
+
+        return "\n".join(parts)
+
+    return str(result)
+
 async def download_paper_with_fallback(
     doi: str,
+    save_path: str | Path,
     title: str = "",
     source: str = "crossref",
     paper_id: str | None = None,
 ):
     """
     通过 Paper Search MCP 尝试从多个开放来源获取论文全文。
+    返回统一格式：
+    {
+        "success": bool,
+        "pdf_path": str | None,
+        "error": str | None,
+    }
     """
 
     tool = await get_paper_mcp_tool(
         "download_with_fallback"
     )
 
-    save_path = Path("data/papers").resolve()
+    save_path = Path(save_path).resolve()
     save_path.mkdir(
         parents=True,
         exist_ok=True,
     )
 
-    # Crossref 场景下 DOI 就可以作为 paper_id
     if paper_id is None:
         paper_id = doi
+
+    # 调用前记录目录中已有的 PDF
+    before_files = {
+        p.resolve(): p.stat().st_mtime_ns
+        for p in save_path.glob("*.pdf")
+    }
 
     result = await tool.ainvoke(
         {
@@ -86,10 +110,48 @@ async def download_paper_with_fallback(
             "doi": doi,
             "title": title,
             "save_path": str(save_path),
-
-            # 只使用开放获取渠道
             "use_scihub": False,
         }
     )
 
-    return result
+    text = _get_mcp_text(result)
+
+    # 调用后重新检查 PDF
+    candidate_files = []
+
+    for pdf_path in save_path.glob("*.pdf"):
+        resolved_path = pdf_path.resolve()
+
+        # 新文件，或者原文件发生了变化
+        if (
+            resolved_path not in before_files
+            or pdf_path.stat().st_mtime_ns
+            != before_files[resolved_path]
+        ):
+            candidate_files.append(pdf_path)
+
+    # 验证是不是真的 PDF
+    for pdf_path in candidate_files:
+        try:
+            if pdf_path.stat().st_size == 0:
+                continue
+
+            with pdf_path.open("rb") as f:
+                if f.read(4) != b"%PDF":
+                    continue
+
+            return {
+                "success": True,
+                "pdf_path": str(pdf_path.resolve()),
+                "error": None,
+            }
+
+        except OSError:
+            continue
+
+    # 没发现有效 PDF
+    return {
+        "success": False,
+        "pdf_path": None,
+        "error": text,
+    }

@@ -52,6 +52,7 @@ class Reranker:
             json=payload,
             headers=headers,
             timeout=60,
+            trust_env=True,
         )
 
         response.raise_for_status()
